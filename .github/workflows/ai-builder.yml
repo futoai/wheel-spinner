@@ -121,6 +121,14 @@ jobs:
         with:
           name: ai-build-source
 
+      - name: Build App
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd app
+          npm install
+          npm run build
+
       - name: Resolve Build Output
         shell: bash
         run: |
