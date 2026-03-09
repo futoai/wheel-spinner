@@ -71,8 +71,7 @@ jobs:
 
           codex exec \
             --model gpt-5.4 \
-            --sandbox workspace-write \
-            --ask-for-approval never \
+            --approval-mode auto-edit \
             --skip-git-repo-check \
             --output-last-message ../codex-final.txt \
             - < ../prompt.txt
