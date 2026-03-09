@@ -250,6 +250,9 @@ jobs:
              \`\`\`
           EOF
 
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
           git checkout main
           cp /tmp/README.md README.md
           git add README.md
