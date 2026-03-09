@@ -79,8 +79,17 @@ jobs:
       - name: Extract and Upload Source
         shell: bash
         run: |
-          cp -R agent-workspace/app ./app
-          rm -rf agent-workspace
+          set -euo pipefail
+
+          # Check if Codex populated the pre-created app subdirectory
+          if [ "$(ls -A agent-workspace/app 2>/dev/null)" ]; then
+            cp -R agent-workspace/app ./app
+            rm -rf agent-workspace
+          else
+            # Codex put files in the root of agent-workspace, so rename the workspace to app
+            rm -rf agent-workspace/app
+            mv agent-workspace ./app
+          fi
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
