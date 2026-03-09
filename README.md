@@ -4,7 +4,7 @@ This repo runs an AI agent (Codex) to generate a web app from `prompt.txt`. Each
 
 ## Current Build
 
-- **IPFS CID**: `bafybeif7ztnhq65lumvvtr4ekcwd2ifwgm3awq4zfr3srh462rwyinlb4y`
+- **IPFS CID**: [`bafybeif7ztnhq65lumvvtr4ekcwd2ifwgm3awq4zfr3srh462rwyinlb4y`](https://ipfs.io/ipfs/bafybeif7ztnhq65lumvvtr4ekcwd2ifwgm3awq4zfr3srh462rwyinlb4y/)
 - **Source**: [ai-build-source](https://github.com/futoai/wheel-spinner/tree/ai-build-source) branch
 - **Build output**: [ai-build-output](https://github.com/futoai/wheel-spinner/tree/ai-build-output) branch
 
@@ -17,5 +17,5 @@ This repo runs an AI agent (Codex) to generate a web app from `prompt.txt`. Each
    ```
 3. Confirm the IPFS CID matches:
    ```bash
-   npx ipfs-only-hash@4.0.0 -r ./dist
+   npx ipfs-only-hash@4.0.0 --cid-version 1 -r ./dist
    ```
