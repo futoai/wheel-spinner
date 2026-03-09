@@ -70,9 +70,8 @@ jobs:
           cd agent-workspace
 
           codex exec \
-            --model gpt-4o \
+            --model gpt-5.4 \
             --sandbox workspace-write \
-            --ask-for-approval never \
             --ephemeral \
             --skip-git-repo-check \
             -c 'project_root_markers=[]' \
