@@ -40,7 +40,7 @@ jobs:
           echo "Workflow Hash: $(cat workflow-hash.txt)"
           echo "Prompt Hash: $(cat prompt-hash.txt)"
 
-      - name: Run Sandboxed AI Agent
+      - name: Run AI Agent
         shell: bash
         env:
           CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
@@ -71,11 +71,8 @@ jobs:
 
           codex exec \
             --model gpt-5.4 \
-            --sandbox workspace-write \
             --ephemeral \
             --skip-git-repo-check \
-            -c 'project_root_markers=[]' \
-            -c 'shell_environment_policy.include_only=["PATH","HOME"]' \
             --output-last-message ../codex-final.txt \
             - < ../prompt.txt
 
@@ -151,8 +148,16 @@ jobs:
           test -d dist && test "$(find dist -type f | wc -l)" -gt 0 || { echo "dist is empty"; exit 1; }
           find dist -type l -print -quit | grep -q . && { echo "symlinks not allowed in dist"; exit 1; } || true
 
-          npx ipfs-only-hash@4.0.0 -r ./dist > ipfs-cid.txt
-          echo "IPFS CID: $(cat ipfs-cid.txt)"
+          IPFS_CID=$(npx ipfs-only-hash@4.0.0 --cid-version 1 -r ./dist)
+          echo "IPFS CID: $IPFS_CID"
+
+          {
+            echo "=== PROMPT ==="
+            cat prompt.txt
+            echo ""
+            echo "=== IPFS CID ==="
+            echo "$IPFS_CID"
+          } > ipfs-cid.txt
 
           tar -czf verifiable-build.tgz \
             app \
@@ -166,7 +171,9 @@ jobs:
       - name: Attest Build Provenance
         uses: actions/attest@v4
         with:
-          subject-path: verifiable-build.tgz
+          subject-path: |
+            verifiable-build.tgz
+            ipfs-cid.txt
 
       - name: Upload Attested Artifact
         uses: actions/upload-artifact@v4
@@ -224,7 +231,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          IPFS_CID="$(cat ipfs-cid.txt)"
+          IPFS_CID=$(grep -A1 "=== IPFS CID ===" ipfs-cid.txt | tail -1)
 
           cat > /tmp/README.md <<EOF
           # Attested AI Build
@@ -233,7 +240,7 @@ jobs:
 
           ## Current Build
 
-          - **IPFS CID**: \`${IPFS_CID}\`
+          - **IPFS CID**: [\`${IPFS_CID}\`](https://ipfs.io/ipfs/${IPFS_CID}/)
           - **Source**: [ai-build-source](https://github.com/${GH_REPO}/tree/ai-build-source) branch
           - **Build output**: [ai-build-output](https://github.com/${GH_REPO}/tree/ai-build-output) branch
 
@@ -246,7 +253,7 @@ jobs:
              \`\`\`
           3. Confirm the IPFS CID matches:
              \`\`\`bash
-             npx ipfs-only-hash@4.0.0 -r ./dist
+             npx ipfs-only-hash@4.0.0 --cid-version 1 -r ./dist
              \`\`\`
           EOF
 
