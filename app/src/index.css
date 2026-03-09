@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+:root {
+  font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+  color: #0f172a;
+  background: #fff7ed;
+}
+
+body {
+  margin: 0;
+}
+
+button {
+  cursor: pointer;
+}
