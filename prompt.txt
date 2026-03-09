@@ -1,1 +1,2 @@
 build a simple counter app with react, vite, tailwindcss
+test building the app as well
