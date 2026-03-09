@@ -1,0 +1,250 @@
+name: Attested AI Build
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'prompt.txt'
+      - '.github/workflows/ai-builder.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: attested-ai-build
+  cancel-in-progress: false
+
+jobs:
+  build_ai:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    environment: codex-auth
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Hash Pipeline Logic (Audit Trail)
+        shell: bash
+        run: |
+          sha256sum .github/workflows/ai-builder.yml > workflow-hash.txt
+          sha256sum prompt.txt > prompt-hash.txt
+          echo "Workflow Hash: $(cat workflow-hash.txt)"
+          echo "Prompt Hash: $(cat prompt-hash.txt)"
+
+      - name: Run Sandboxed AI Agent
+        shell: bash
+        env:
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+        run: |
+          set -euo pipefail
+
+          npm i -g @openai/codex@0.112.0
+
+          mkdir -p agent-workspace/app
+
+          # Keep auth isolated to this step only.
+          export HOME="$RUNNER_TEMP/codex-home"
+          mkdir -p "$HOME/.codex"
+          chmod 700 "$HOME/.codex"
+
+          cleanup() {
+            shred -u "$HOME/.codex/auth.json" 2>/dev/null || rm -f "$HOME/.codex/auth.json"
+          }
+          trap cleanup EXIT
+
+          printf '%s' "$CODEX_AUTH_JSON" > "$HOME/.codex/auth.json"
+          chmod 600 "$HOME/.codex/auth.json"
+          unset CODEX_AUTH_JSON
+
+          codex login status
+
+          cd agent-workspace
+
+          codex exec \
+            --model gpt-4o \
+            --sandbox workspace-write \
+            --ask-for-approval never \
+            --ephemeral \
+            --skip-git-repo-check \
+            -c 'project_root_markers=[]' \
+            -c 'shell_environment_policy.include_only=["PATH","HOME"]' \
+            --output-last-message ../codex-final.txt \
+            - < ../prompt.txt
+
+      - name: Extract and Upload Source
+        shell: bash
+        run: |
+          cp -R agent-workspace/app ./app
+          rm -rf agent-workspace
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-build-source
+          path: |
+            app
+            prompt.txt
+            workflow-hash.txt
+            prompt-hash.txt
+            codex-final.txt
+
+  attest_and_publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: build_ai
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Download Source Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ai-build-source
+
+      - name: Resolve Build Output
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -d app/dist ]; then
+            mv app/dist dist
+          elif [ -d app/build ]; then
+            mv app/build dist
+          else
+            echo "Agent did not produce app/dist or app/build"
+            exit 1
+          fi
+
+      - name: Validate and Package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -d dist && test "$(find dist -type f | wc -l)" -gt 0 || { echo "dist is empty"; exit 1; }
+          find dist -type l -print -quit | grep -q . && { echo "symlinks not allowed in dist"; exit 1; } || true
+
+          npx ipfs-only-hash@4.0.0 -r ./dist > ipfs-cid.txt
+          echo "IPFS CID: $(cat ipfs-cid.txt)"
+
+          tar -czf verifiable-build.tgz \
+            app \
+            dist \
+            prompt.txt \
+            prompt-hash.txt \
+            workflow-hash.txt \
+            codex-final.txt \
+            ipfs-cid.txt
+
+      - name: Attest Build Provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: verifiable-build.tgz
+
+      - name: Upload Attested Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: attested-ai-release
+          path: verifiable-build.tgz
+
+      - name: Push Source Branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          PUBLISH_DIR="$(mktemp -d)"
+          trap 'rm -rf "$PUBLISH_DIR"' EXIT
+
+          cp -R app "$PUBLISH_DIR"/
+          cd "$PUBLISH_DIR"
+
+          git init -b ai-build-source
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add app/
+          git commit -m "chore: attested AI build source [skip ci]"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push --force origin ai-build-source
+
+      - name: Push Build Branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          PUBLISH_DIR="$(mktemp -d)"
+          trap 'rm -rf "$PUBLISH_DIR"' EXIT
+
+          cp -R dist "$PUBLISH_DIR"/
+          cd "$PUBLISH_DIR"
+
+          git init -b ai-build-output
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add dist/
+          git commit -m "chore: attested AI build output [skip ci]"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push --force origin ai-build-output
+
+      - name: Generate and Push README
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          IPFS_CID="$(cat ipfs-cid.txt)"
+
+          cat > /tmp/README.md <<EOF
+          # Attested AI Build
+
+          This repo runs an AI agent (Codex) to generate a web app from \`prompt.txt\`. Each build is attested with GitHub provenance so you can verify where and how the artifact was produced.
+
+          ## Current Build
+
+          - **IPFS CID**: \`${IPFS_CID}\`
+          - **Source**: [ai-build-source](https://github.com/${GH_REPO}/tree/ai-build-source) branch
+          - **Build output**: [ai-build-output](https://github.com/${GH_REPO}/tree/ai-build-output) branch
+
+          ## How to Verify
+
+          1. Download the \`attested-ai-release\` artifact from the [latest workflow run](https://github.com/${GH_REPO}/actions).
+          2. Verify the attestation:
+             \`\`\`bash
+             gh attestation verify verifiable-build.tgz -R ${GH_REPO}
+             \`\`\`
+          3. Confirm the IPFS CID matches:
+             \`\`\`bash
+             npx ipfs-only-hash@4.0.0 -r ./dist
+             \`\`\`
+          EOF
+
+          git checkout main
+          cp /tmp/README.md README.md
+          git add README.md
+          git diff --staged --quiet && echo "No README changes" || git commit -m "docs: update README with build IPFS CID [skip ci]"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" main
