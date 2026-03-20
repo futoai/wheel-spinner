@@ -1,55 +1,114 @@
-name: Attested AI Build
+name: Codex Run
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'prompt.txt'
-      - '.github/workflows/ai-builder.yml'
   workflow_dispatch:
+    inputs:
+      target_branch:
+        description: Branch to branch off from and open the PR back into.
+        required: true
+        type: string
+      prompt:
+        description: Exact Codex prompt to execute for this run.
+        required: true
+        type: string
 
-concurrency:
-  group: attested-ai-build
-  cancel-in-progress: false
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+  attestations: write
 
 jobs:
-  build_ai:
+  codex-run:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    environment: codex-auth
-
+    env:
+      TARGET_BRANCH: ${{ inputs.target_branch }}
+      PROMPT: ${{ inputs.prompt }}
+      CODEX_MODEL: gpt-5.3-codex
+      CODEX_VERSION: 0.116.0
+      CODEX_SANDBOX: danger-full-access
+      CODEX_ARGS: '["--search"]'
+      CODEX_SAFETY_STRATEGY: drop-sudo
+      META_DIR: ${{ runner.temp }}/codex-run
+      CODEX_OUTPUT_FILE: ${{ runner.temp }}/codex-run/codex-output.md
+      PREDICATE_FILE: ${{ runner.temp }}/codex-run/codex-run-predicate.json
+      PR_BODY_FILE: ${{ runner.temp }}/codex-run/pr-body.md
+      SNAPSHOT_FILE: ${{ runner.temp }}/codex-run/branch-snapshot.tar
+      RUN_PREDICATE_TYPE: https://verifiable-codex.dev/codex-run/v1
     steps:
-      - name: Checkout Repository
+      - name: Check out workflow repository
         uses: actions/checkout@v4
         with:
-          persist-credentials: false
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Prepare target and run branches
+        run: |
+          set -euo pipefail
+
+          mkdir -p "${META_DIR}"
+
+          if ! git check-ref-format --branch "${TARGET_BRANCH}" >/dev/null 2>&1; then
+            echo "Invalid target branch name: ${TARGET_BRANCH}" >&2
+            exit 1
+          fi
+
+          timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+          target_branch_slug="$(printf '%s' "${TARGET_BRANCH}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g; s/^(.{48}).*$/\1/')"
+          target_branch_slug="${target_branch_slug:-branch}"
+          prompt_compact="$(printf '%s' "${PROMPT}" | tr '\r\n\t' ' ' | tr -s '[:space:]' ' ' | sed -E 's/^ //; s/ $//')"
+          prompt_summary="$(printf '%s' "${prompt_compact}" | sed -E 's/^(.{0,41}).*$/\1/; s#[ .,:;_/-]+$##')"
+          prompt_summary="${prompt_summary:-run}"
+          if [[ ${#prompt_compact} -gt 41 && "${prompt_summary}" != "run" ]]; then
+            prompt_summary="${prompt_summary}..."
+          fi
+
+          run_branch="codex/run/${timestamp}-${target_branch_slug}"
+          target_branch_created=false
+
+          if git ls-remote --exit-code --heads origin "refs/heads/${TARGET_BRANCH}" >/dev/null 2>&1; then
+            git fetch --no-tags origin "+refs/heads/${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}"
+            git switch --detach "origin/${TARGET_BRANCH}" >/dev/null
+            base_sha="$(git rev-parse HEAD)"
+            git switch --create "${run_branch}" >/dev/null
+          else
+            target_branch_created=true
+            git switch --orphan "__codex_init_${timestamp}" >/dev/null
+            git rm -rf . >/dev/null 2>&1 || true
+            find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+            git clean -fdx >/dev/null 2>&1 || true
+            git -c commit.gpgsign=false commit --allow-empty -m "chore: initialize ${TARGET_BRANCH}" >/dev/null
+            base_sha="$(git rev-parse HEAD)"
+            git push origin "HEAD:refs/heads/${TARGET_BRANCH}"
+            git branch -M "${run_branch}"
+          fi
+
+          {
+            echo "BASE_SHA=${base_sha}"
+            echo "RUN_BRANCH=${run_branch}"
+            echo "PROMPT_SUMMARY=${prompt_summary}"
+            echo "TARGET_BRANCH_CREATED=${target_branch_created}"
+          } >> "${GITHUB_ENV}"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "22"
 
-      - name: Hash Pipeline Logic (Audit Trail)
-        shell: bash
-        run: |
-          sha256sum .github/workflows/ai-builder.yml > workflow-hash.txt
-          sha256sum prompt.txt > prompt-hash.txt
-          echo "Workflow Hash: $(cat workflow-hash.txt)"
-          echo "Prompt Hash: $(cat prompt-hash.txt)"
-
-      - name: Run AI Agent
+      - name: Run Codex
         shell: bash
         env:
           CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
         run: |
           set -euo pipefail
 
-          npm i -g @openai/codex@0.112.0
-
-          mkdir -p agent-workspace/app
+          # Install the specific version of Codex CLI
+          npm i -g @openai/codex@${CODEX_VERSION}
 
           # Keep auth isolated to this step only.
           export HOME="$RUNNER_TEMP/codex-home"
@@ -67,217 +126,166 @@ jobs:
 
           codex login status
 
-          cd agent-workspace
+          # Parse JSON array CODEX_ARGS into a bash array
+          eval "EXTRA_ARGS=($(echo "$CODEX_ARGS" | jq -r '.[] | @sh'))"
 
-          codex exec \
-            --model gpt-5.4 \
-            --sandbox danger-full-access \
-            --skip-git-repo-check \
-            --output-last-message ../codex-final.txt \
-            - < ../prompt.txt
+          # Execute codex and pass the prompt via stdin
+          printf '%s' "$PROMPT" | codex exec \
+            --model "$CODEX_MODEL" \
+            --sandbox "$CODEX_SANDBOX" \
+            --safety-strategy "$CODEX_SAFETY_STRATEGY" \
+            --output-file "$CODEX_OUTPUT_FILE" \
+            "${EXTRA_ARGS[@]}" \
+            -
 
-      - name: Extract and Upload Source
-        shell: bash
+      - name: Finalize commit, snapshot, predicate, and PR body
+        env:
+          REPOSITORY: ${{ github.repository }}
+          ACTOR: ${{ github.actor }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+          WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
 
-          # Check if Codex populated the pre-created app subdirectory
-          if [ "$(ls -A agent-workspace/app 2>/dev/null)" ]; then
-            cp -R agent-workspace/app ./app
-            rm -rf agent-workspace
-          else
-            # Codex put files in the root of agent-workspace, so rename the workspace to app
-            rm -rf agent-workspace/app
-            mv agent-workspace ./app
-          fi
-
-      - name: Upload Build Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ai-build-source
-          path: |
-            app
-            prompt.txt
-            workflow-hash.txt
-            prompt-hash.txt
-            codex-final.txt
-
-  attest_and_publish:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: build_ai
-    permissions:
-      contents: write
-      id-token: write
-      attestations: write
-
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Download Source Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ai-build-source
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Install Dependencies
-        working-directory: ./app
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm install
-          fi
-
-      - name: Build App
-        working-directory: ./app
-        run: |
-          chmod +x node_modules/esbuild/bin/esbuild 2>/dev/null || true
-          npm run build
-
-      - name: Resolve Build Output
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [ -d app/dist ]; then
-            mv app/dist dist
-          elif [ -d app/build ]; then
-            mv app/build dist
-          else
-            echo "Agent did not produce app/dist or app/build"
+          if [[ ! -f "${CODEX_OUTPUT_FILE}" ]]; then
+            echo "Missing required file: ${CODEX_OUTPUT_FILE}" >&2
             exit 1
           fi
 
-      - name: Validate and Package
-        shell: bash
-        run: |
-          set -euo pipefail
+          commit_title="codex: ${PROMPT_SUMMARY}"
+          commit_message_file="$(mktemp)"
 
-          test -d dist && test "$(find dist -type f | wc -l)" -gt 0 || { echo "dist is empty"; exit 1; }
-          find dist -type l -print -quit | grep -q . && { echo "symlinks not allowed in dist"; exit 1; } || true
+          cat > "${commit_message_file}" <<EOF
+          ${commit_title}
 
-          IPFS_CID=$(npx ipfs-only-hash@4.0.0 --cid-version 1 -r ./dist)
-          echo "IPFS CID: $IPFS_CID"
+          Prompt:
+          ${PROMPT}
 
-          {
-            echo "=== PROMPT ==="
-            cat prompt.txt
-            echo ""
-            echo "=== IPFS CID ==="
-            echo "$IPFS_CID"
-          } > ipfs-cid.txt
-
-          tar -czf verifiable-build.tgz \
-            app \
-            dist \
-            prompt.txt \
-            prompt-hash.txt \
-            workflow-hash.txt \
-            codex-final.txt \
-            ipfs-cid.txt
-
-      - name: Attest Build Provenance
-        uses: actions/attest@v4
-        with:
-          subject-path: |
-            verifiable-build.tgz
-            ipfs-cid.txt
-
-      - name: Upload Attested Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: attested-ai-release
-          path: verifiable-build.tgz
-
-      - name: Push Source Branch
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-
-          PUBLISH_DIR="$(mktemp -d)"
-          trap 'rm -rf "$PUBLISH_DIR"' EXIT
-
-          cp -R app "$PUBLISH_DIR"/
-          cd "$PUBLISH_DIR"
-
-          git init -b ai-build-source
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add app/
-          git commit -m "chore: attested AI build source [skip ci]"
-          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git push --force origin ai-build-source
-
-      - name: Push Build Branch
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-
-          PUBLISH_DIR="$(mktemp -d)"
-          trap 'rm -rf "$PUBLISH_DIR"' EXIT
-
-          cp -R dist "$PUBLISH_DIR"/
-          cd "$PUBLISH_DIR"
-
-          git init -b ai-build-output
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add dist/
-          git commit -m "chore: attested AI build output [skip ci]"
-          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git push --force origin ai-build-output
-
-      - name: Generate and Push README
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-
-          IPFS_CID=$(grep -A1 "=== IPFS CID ===" ipfs-cid.txt | tail -1)
-
-          cat > /tmp/README.md <<EOF
-          # Attested AI Build
-
-          This repo runs an AI agent (Codex) to generate a web app from \`prompt.txt\`. Each build is attested with GitHub provenance so you can verify where and how the artifact was produced.
-
-          ## Current Build
-
-          - **IPFS CID**: [\`${IPFS_CID}\`](https://ipfs.io/ipfs/${IPFS_CID}/)
-          - **Source**: [ai-build-source](https://github.com/${GH_REPO}/tree/ai-build-source) branch
-          - **Build output**: [ai-build-output](https://github.com/${GH_REPO}/tree/ai-build-output) branch
-
-          ## How to Verify
-
-          1. Download the \`attested-ai-release\` artifact from the [latest workflow run](https://github.com/${GH_REPO}/actions).
-          2. Verify the attestation:
-             \`\`\`bash
-             gh attestation verify verifiable-build.tgz -R ${GH_REPO}
-             \`\`\`
-          3. Confirm the IPFS CID matches:
-             \`\`\`bash
-             npx ipfs-only-hash@4.0.0 --cid-version 1 -r ./dist
-             \`\`\`
+          Target-Branch: ${TARGET_BRANCH}
+          Base-SHA: ${BASE_SHA}
+          Run-Branch: ${RUN_BRANCH}
           EOF
 
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git -c commit.gpgsign=false commit --allow-empty --file "${commit_message_file}"
+          rm -f "${commit_message_file}"
 
-          git checkout main
-          cp /tmp/README.md README.md
-          git add README.md
-          git diff --staged --quiet && echo "No README changes" || git commit -m "docs: update README with build IPFS CID [skip ci]"
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" main
+          head_sha="$(git rev-parse HEAD)"
+          git archive --format=tar "${head_sha}" > "${SNAPSHOT_FILE}"
+          codex_output_sha256="$(sha256sum "${CODEX_OUTPUT_FILE}" | awk '{print $1}')"
+          snapshot_sha256="$(sha256sum "${SNAPSHOT_FILE}" | awk '{print $1}')"
+
+          jq -n \
+            --arg repository "${REPOSITORY}" \
+            --arg workflow_run_id "${WORKFLOW_RUN_ID}" \
+            --arg workflow_run_attempt "${WORKFLOW_RUN_ATTEMPT}" \
+            --arg actor "${ACTOR}" \
+            --arg target_branch "${TARGET_BRANCH}" \
+            --argjson target_branch_created "${TARGET_BRANCH_CREATED}" \
+            --arg run_branch "${RUN_BRANCH}" \
+            --arg base_sha "${BASE_SHA}" \
+            --arg head_sha "${head_sha}" \
+            --arg prompt "${PROMPT}" \
+            --arg codex_output_sha256 "${codex_output_sha256}" \
+            --arg snapshot_sha256 "${snapshot_sha256}" \
+            --arg model "${CODEX_MODEL}" \
+            --arg codex_version "${CODEX_VERSION}" \
+            '{
+              repository: $repository,
+              workflow_run_id: $workflow_run_id,
+              workflow_run_attempt: $workflow_run_attempt,
+              actor: $actor,
+              target_branch: $target_branch,
+              target_branch_created: $target_branch_created,
+              run_branch: $run_branch,
+              base_sha: $base_sha,
+              head_sha: $head_sha,
+              prompt: $prompt,
+              codex_output_sha256: $codex_output_sha256,
+              branch_snapshot_sha256: $snapshot_sha256,
+              model: $model,
+              codex_version: $codex_version
+            }' > "${PREDICATE_FILE}"
+
+          cat > "${PR_BODY_FILE}" <<EOF
+          ## Prompt
+
+          \`\`\`\`\`\`\`\`
+          ${PROMPT}
+          \`\`\`\`\`\`\`\`
+
+          ## Verify
+
+          \`\`\`bash
+          git fetch origin ${RUN_BRANCH}
+          git archive --format=tar ${head_sha} > branch-snapshot.tar
+          gh attestation verify branch-snapshot.tar -R ${REPOSITORY}
+          gh attestation verify branch-snapshot.tar -R ${REPOSITORY} --predicate-type ${RUN_PREDICATE_TYPE} --format json --jq '.[].verificationResult.statement.predicate'
+          git diff ${BASE_SHA} ${head_sha}
+          \`\`\`
+
+          Verify that the custom predicate reports:
+
+          - \`base_sha\`: \`${BASE_SHA}\`
+          - \`head_sha\`: \`${head_sha}\`
+          - \`run_branch\`: \`${RUN_BRANCH}\`
+          - \`codex_output_sha256\`: \`${codex_output_sha256}\`
+          - \`branch_snapshot_sha256\`: \`${snapshot_sha256}\`
+          EOF
+
+          {
+            echo "HEAD_SHA=${head_sha}"
+            echo "COMMIT_TITLE=${commit_title}"
+            echo "SNAPSHOT_SHA256=${snapshot_sha256}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Create provenance attestation
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ env.SNAPSHOT_FILE }}
+
+      - name: Create run attestation
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ env.SNAPSHOT_FILE }}
+          predicate-type: ${{ env.RUN_PREDICATE_TYPE }}
+          predicate-path: ${{ env.PREDICATE_FILE }}
+
+      - name: Push run branch
+        run: git push --set-upstream origin "${RUN_BRANCH}"
+
+      - name: Open pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pr_url="$(
+            gh pr create \
+              --base "${TARGET_BRANCH}" \
+              --head "${RUN_BRANCH}" \
+              --title "${COMMIT_TITLE}" \
+              --body-file "${PR_BODY_FILE}"
+          )"
+          echo "PR_URL=${pr_url}" >> "${GITHUB_ENV}"
+
+      - name: Upload run artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-run-metadata-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.PREDICATE_FILE }}
+            ${{ env.CODEX_OUTPUT_FILE }}
+          retention-days: 14
+
+      - name: Write workflow summary
+        run: |
+          {
+            echo "## Codex Run"
+            echo
+            echo "- Target branch: \`${TARGET_BRANCH}\`"
+            echo "- Target branch created: \`${TARGET_BRANCH_CREATED}\`"
+            echo "- Base SHA: \`${BASE_SHA}\`"
+            echo "- Head SHA: \`${HEAD_SHA}\`"
+            echo "- Run branch: \`${RUN_BRANCH}\`"
+            echo "- Branch snapshot SHA-256: \`${SNAPSHOT_SHA256}\`"
+            echo "- Pull request: ${PR_URL}"
+          } >> "${GITHUB_STEP_SUMMARY}"
