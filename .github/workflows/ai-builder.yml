@@ -145,12 +145,13 @@ jobs:
           eval "EXTRA_ARGS=($(echo "$CODEX_ARGS" | jq -r '.[] | @sh'))"
 
           # Execute codex and pass the prompt via stdin
-          printf '%s' "$PROMPT" | codex exec \
+          printf '%s' "$PROMPT" | codex \
+            --ask-for-approval "$CODEX_APPROVAL_POLICY" \
+            "${EXTRA_ARGS[@]}" \
+            exec \
             --model "$CODEX_MODEL" \
             --sandbox "$CODEX_SANDBOX" \
-            --ask-for-approval "$CODEX_APPROVAL_POLICY" \
             --output-last-message "$CODEX_OUTPUT_FILE" \
-            "${EXTRA_ARGS[@]}" \
             -
 
       - name: Finalize commit, snapshot, predicate, and PR body
