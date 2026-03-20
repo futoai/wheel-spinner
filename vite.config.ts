@@ -4,6 +4,8 @@ import path from 'node:path'
 
 // https://vite.dev/config/
 export default defineConfig({
+  // Use relative asset URLs so the build works from IPFS gateway paths.
+  base: './',
   plugins: [react()],
   resolve: {
     alias: {
