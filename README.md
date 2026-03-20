@@ -1,73 +1,38 @@
-# React + TypeScript + Vite
+# Wheel Spinner
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Wheel Spinner is a React + TypeScript + Vite app that builds to static files and can be hosted on IPFS.
 
-Currently, two official plugins are available:
+## IPFS Compatibility Fix
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+The build is configured with a relative Vite base path (`base: './'`) so generated files use relative links like `./assets/...` instead of `/assets/...`.
 
-## React Compiler
+This prevents 404s on IPFS gateways where the app is served from `/ipfs/<CID>/...`.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Latest Build CID
 
-## Expanding the ESLint configuration
+Generated on: 2026-03-20 (UTC)
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+- CID (v1): `bafybeicwshngvmh4nnhi5i4nlrscsvxxz4dhu647wbk4wenjp7ry3r2thq`
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+## IPFS Gateway Links
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+- https://ipfs.io/ipfs/bafybeicwshngvmh4nnhi5i4nlrscsvxxz4dhu647wbk4wenjp7ry3r2thq
+- https://dweb.link/ipfs/bafybeicwshngvmh4nnhi5i4nlrscsvxxz4dhu647wbk4wenjp7ry3r2thq
+- https://cloudflare-ipfs.com/ipfs/bafybeicwshngvmh4nnhi5i4nlrscsvxxz4dhu647wbk4wenjp7ry3r2thq
+- https://gateway.pinata.cloud/ipfs/bafybeicwshngvmh4nnhi5i4nlrscsvxxz4dhu647wbk4wenjp7ry3r2thq
+- https://w3s.link/ipfs/bafybeicwshngvmh4nnhi5i4nlrscsvxxz4dhu647wbk4wenjp7ry3r2thq
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Build
+
+```bash
+npm ci
+npm run build
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Recompute CID For `dist/`
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npx ipfs-car pack dist --output /tmp/wheel-spinner.car | tail -n 1
 ```
+
+That command returns the root directory CID for the current build output.
