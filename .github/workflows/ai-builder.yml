@@ -27,8 +27,8 @@ jobs:
       CODEX_MODEL: gpt-5.3-codex
       CODEX_VERSION: 0.116.0
       CODEX_SANDBOX: danger-full-access
+      CODEX_APPROVAL_POLICY: never
       CODEX_ARGS: '["--search"]'
-      CODEX_SAFETY_STRATEGY: drop-sudo
       RUN_PREDICATE_TYPE: https://verifiable-codex.dev/codex-run/v1
     steps:
       - name: Set dynamic environment variables
@@ -124,7 +124,7 @@ jobs:
             shred -u "$HOME/.codex/auth.json" 2>/dev/null || rm -f "$HOME/.codex/auth.json"
           }
           trap cleanup EXIT
-          
+
           if [[ -z "${CODEX_AUTH_JSON:-}" ]]; then
             echo "Missing repository secret CODEX_AUTH_JSON." >&2
             echo "Populate it with the full contents of ~/.codex/auth.json from a machine where Codex is already logged in." >&2
@@ -148,8 +148,8 @@ jobs:
           printf '%s' "$PROMPT" | codex exec \
             --model "$CODEX_MODEL" \
             --sandbox "$CODEX_SANDBOX" \
-            --safety-strategy "$CODEX_SAFETY_STRATEGY" \
-            --output-file "$CODEX_OUTPUT_FILE" \
+            --ask-for-approval "$CODEX_APPROVAL_POLICY" \
+            --output-last-message "$CODEX_OUTPUT_FILE" \
             "${EXTRA_ARGS[@]}" \
             -
 
