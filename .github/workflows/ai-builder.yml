@@ -124,7 +124,17 @@ jobs:
             shred -u "$HOME/.codex/auth.json" 2>/dev/null || rm -f "$HOME/.codex/auth.json"
           }
           trap cleanup EXIT
-
+          
+          if [[ -z "${CODEX_AUTH_JSON:-}" ]]; then
+            echo "Missing repository secret CODEX_AUTH_JSON." >&2
+            echo "Populate it with the full contents of ~/.codex/auth.json from a machine where Codex is already logged in." >&2
+            exit 1
+          fi
+          if ! printf '%s' "$CODEX_AUTH_JSON" | jq -e 'type == "object" and has("tokens") and has("last_refresh")' >/dev/null; then
+            echo "Repository secret CODEX_AUTH_JSON is not a valid Codex auth.json payload." >&2
+            echo "Set it to the exact contents of ~/.codex/auth.json, not a file path, secret name, or wrapper JSON." >&2
+            exit 1
+          fi
           printf '%s' "$CODEX_AUTH_JSON" > "$HOME/.codex/auth.json"
           chmod 600 "$HOME/.codex/auth.json"
           unset CODEX_AUTH_JSON
