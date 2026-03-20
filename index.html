@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Counter</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; min-height: 100vh; display: grid; place-items: center; background:#f6f7fb; }
+    .app { text-align: center; padding: 1.5rem; border-radius: 12px; background: #fff; box-shadow: 0 6px 24px rgba(0,0,0,.08); }
+    #count { font-size: 3rem; margin: .5rem 0 1rem; }
+    button { font-size: 1rem; padding: .5rem .8rem; margin: 0 .2rem; border: 1px solid #d0d5dd; background: #f8fafc; border-radius: 8px; cursor: pointer; }
+    button:hover { background: #eef2f7; }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <h1>Counter</h1>
+    <div id="count">0</div>
+    <button id="dec">-1</button>
+    <button id="inc">+1</button>
+    <button id="reset">Reset</button>
+  </main>
+  <script>
+    let count = 0;
+    const el = document.getElementById('count');
+    const render = () => (el.textContent = count);
+    document.getElementById('dec').onclick = () => { count--; render(); };
+    document.getElementById('inc').onclick = () => { count++; render(); };
+    document.getElementById('reset').onclick = () => { count = 0; render(); };
+  </script>
+</body>
+</html>
