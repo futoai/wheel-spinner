@@ -29,13 +29,18 @@ jobs:
       CODEX_SANDBOX: danger-full-access
       CODEX_ARGS: '["--search"]'
       CODEX_SAFETY_STRATEGY: drop-sudo
-      META_DIR: ${{ runner.temp }}/codex-run
-      CODEX_OUTPUT_FILE: ${{ runner.temp }}/codex-run/codex-output.md
-      PREDICATE_FILE: ${{ runner.temp }}/codex-run/codex-run-predicate.json
-      PR_BODY_FILE: ${{ runner.temp }}/codex-run/pr-body.md
-      SNAPSHOT_FILE: ${{ runner.temp }}/codex-run/branch-snapshot.tar
       RUN_PREDICATE_TYPE: https://verifiable-codex.dev/codex-run/v1
     steps:
+      - name: Set dynamic environment variables
+        run: |
+          {
+            echo "META_DIR=${RUNNER_TEMP}/codex-run"
+            echo "CODEX_OUTPUT_FILE=${RUNNER_TEMP}/codex-run/codex-output.md"
+            echo "PREDICATE_FILE=${RUNNER_TEMP}/codex-run/codex-run-predicate.json"
+            echo "PR_BODY_FILE=${RUNNER_TEMP}/codex-run/pr-body.md"
+            echo "SNAPSHOT_FILE=${RUNNER_TEMP}/codex-run/branch-snapshot.tar"
+          } >> "${GITHUB_ENV}"
+
       - name: Check out workflow repository
         uses: actions/checkout@v4
         with:
