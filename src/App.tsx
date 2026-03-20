@@ -220,12 +220,18 @@ function App() {
                 <div className="absolute inset-0 rounded-full bg-[radial-gradient(circle_at_center,transparent_12%,rgba(255,255,255,0.14)_68%,rgba(255,255,255,0.35)_100%)]" />
                 {options.map((option, index) => {
                   const angle = index * segment + segment / 2;
+                  const radians = ((angle - 90) * Math.PI) / 180;
+                  const labelRadiusPercent = 34;
+                  const x = 50 + Math.cos(radians) * labelRadiusPercent;
+                  const y = 50 + Math.sin(radians) * labelRadiusPercent;
                   return (
                     <span
                       key={`${option}-${index}`}
-                      className="pointer-events-none absolute left-1/2 top-1/2 w-[38%] -translate-x-1/2 text-center text-xs font-semibold text-slate-900 md:text-sm"
+                      className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 text-center text-[11px] font-semibold leading-tight text-slate-900 md:text-sm"
                       style={{
-                        transform: `rotate(${angle}deg) translateY(-185%)`,
+                        left: `${x}%`,
+                        top: `${y}%`,
+                        width: '32%',
                         textShadow: '0 1px 0 rgba(255,255,255,0.35)',
                       }}
                     >
