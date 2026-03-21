@@ -1,22 +1,30 @@
-name: Codex Run
+name: Codex Direct Run
 
 on:
   workflow_dispatch:
     inputs:
       target_branch:
-        description: Branch to branch off from and open the PR back into.
+        description: Branch to update directly.
         required: true
         type: string
       prompt:
-        description: Exact Codex prompt to execute for this run.
+        description: Exact Codex prompt to execute.
         required: true
+        type: string
+      start_commit:
+        description: Optional commit to start from. Defaults to current target head.
+        required: false
+        default: ""
         type: string
 
 permissions:
   contents: write
-  pull-requests: write
   id-token: write
   attestations: write
+
+concurrency:
+  group: codex-${{ inputs.target_branch }}
+  cancel-in-progress: false
 
 jobs:
   codex-run:
@@ -24,25 +32,16 @@ jobs:
     env:
       TARGET_BRANCH: ${{ inputs.target_branch }}
       PROMPT: ${{ inputs.prompt }}
+      START_COMMIT: ${{ inputs.start_commit }}
       CODEX_MODEL: gpt-5.3-codex
       CODEX_VERSION: 0.116.0
       CODEX_SANDBOX: danger-full-access
       CODEX_APPROVAL_POLICY: never
       CODEX_ARGS: '["--search"]'
-      RUN_PREDICATE_TYPE: https://verifiable-codex.dev/codex-run/v1
-    steps:
-      - name: Set dynamic environment variables
-        run: |
-          {
-            echo "META_DIR=${RUNNER_TEMP}/codex-run"
-            echo "CODEX_OUTPUT_FILE=${RUNNER_TEMP}/codex-run/codex-output.md"
-            echo "PREDICATE_FILE=${RUNNER_TEMP}/codex-run/codex-run-predicate.json"
-            echo "PR_BODY_FILE=${RUNNER_TEMP}/codex-run/pr-body.md"
-            echo "SNAPSHOT_FILE=${RUNNER_TEMP}/codex-run/branch-snapshot.tar"
-          } >> "${GITHUB_ENV}"
+      RUN_PREDICATE_TYPE: https://verifiable-codex.dev/codex-run/v2
 
-      - name: Check out workflow repository
-        uses: actions/checkout@v4
+    steps:
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: true
@@ -52,53 +51,58 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Prepare target and run branches
+      - name: Prepare metadata paths
+        run: |
+          {
+            echo "META_DIR=${RUNNER_TEMP}/codex-run"
+            echo "CODEX_OUTPUT_FILE=${RUNNER_TEMP}/codex-run/codex-output.md"
+            echo "PREDICATE_FILE=${RUNNER_TEMP}/codex-run/codex-run-predicate.json"
+            echo "SNAPSHOT_FILE=${RUNNER_TEMP}/codex-run/branch-snapshot.tar"
+          } >> "$GITHUB_ENV"
+          mkdir -p "${RUNNER_TEMP}/codex-run"
+
+      - name: Resolve target, backup current head, and choose start point
         run: |
           set -euo pipefail
 
-          mkdir -p "${META_DIR}"
-
           if ! git check-ref-format --branch "${TARGET_BRANCH}" >/dev/null 2>&1; then
-            echo "Invalid target branch name: ${TARGET_BRANCH}" >&2
+            echo "Invalid target branch: ${TARGET_BRANCH}" >&2
             exit 1
           fi
 
-          timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-          target_branch_slug="$(printf '%s' "${TARGET_BRANCH}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g; s/^(.{48}).*$/\1/')"
-          target_branch_slug="${target_branch_slug:-branch}"
-          prompt_compact="$(printf '%s' "${PROMPT}" | tr '\r\n\t' ' ' | tr -s '[:space:]' ' ' | sed -E 's/^ //; s/ $//')"
-          prompt_summary="$(printf '%s' "${prompt_compact}" | sed -E 's/^(.{0,41}).*$/\1/; s#[ .,:;_/-]+$##')"
-          prompt_summary="${prompt_summary:-run}"
-          if [[ ${#prompt_compact} -gt 41 && "${prompt_summary}" != "run" ]]; then
-            prompt_summary="${prompt_summary}..."
-          fi
+          git fetch --no-tags origin "+refs/heads/${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}"
 
-          run_branch="codex/run/${timestamp}-${target_branch_slug}"
-          target_branch_created=false
+          previous_target_sha="$(git rev-parse "origin/${TARGET_BRANCH}")"
 
-          if git ls-remote --exit-code --heads origin "refs/heads/${TARGET_BRANCH}" >/dev/null 2>&1; then
-            git fetch --no-tags origin "+refs/heads/${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}"
-            git switch --detach "origin/${TARGET_BRANCH}" >/dev/null
-            base_sha="$(git rev-parse HEAD)"
-            git switch --create "${run_branch}" >/dev/null
+          if [[ -n "${START_COMMIT}" ]]; then
+            git fetch --no-tags origin "${START_COMMIT}" || true
+            start_sha="$(git rev-parse "${START_COMMIT}^{commit}")"
           else
-            target_branch_created=true
-            git switch --orphan "__codex_init_${timestamp}" >/dev/null
-            git rm -rf . >/dev/null 2>&1 || true
-            find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
-            git clean -fdx >/dev/null 2>&1 || true
-            git -c commit.gpgsign=false commit --allow-empty -m "chore: initialize ${TARGET_BRANCH}" >/dev/null
-            base_sha="$(git rev-parse HEAD)"
-            git push origin "HEAD:refs/heads/${TARGET_BRANCH}"
-            git branch -M "${run_branch}"
+            start_sha="${previous_target_sha}"
           fi
+
+          # Strongly recommended: only allow replay from target branch history.
+          git merge-base --is-ancestor "${start_sha}" "origin/${TARGET_BRANCH}"
+
+          timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+          target_branch_slug="$(printf '%s' "${TARGET_BRANCH}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._/-]+/-/g')"
+          backup_branch="backup/${target_branch_slug}/${timestamp}-${previous_target_sha:0:12}"
+
+          git branch -f "${backup_branch}" "${previous_target_sha}"
+          git push origin "refs/heads/${backup_branch}:refs/heads/${backup_branch}"
+
+          git switch --detach "${start_sha}"
+
+          prompt_compact="$(printf '%s' "${PROMPT}" | tr '\r\n\t' ' ' | tr -s '[:space:]' ' ' | sed -E 's/^ //; s/ $//')"
+          prompt_summary="$(printf '%s' "${prompt_compact}" | sed -E 's/^(.{0,60}).*$/\1/; s#[ .,:;_/-]+$##')"
+          prompt_summary="${prompt_summary:-run}"
 
           {
-            echo "BASE_SHA=${base_sha}"
-            echo "RUN_BRANCH=${run_branch}"
+            echo "PREVIOUS_TARGET_SHA=${previous_target_sha}"
+            echo "START_SHA=${start_sha}"
+            echo "BACKUP_BRANCH=${backup_branch}"
             echo "PROMPT_SUMMARY=${prompt_summary}"
-            echo "TARGET_BRANCH_CREATED=${target_branch_created}"
-          } >> "${GITHUB_ENV}"
+          } >> "$GITHUB_ENV"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -112,10 +116,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Install the specific version of Codex CLI
           npm i -g @openai/codex@${CODEX_VERSION}
 
-          # Keep auth isolated to this step only.
           export HOME="$RUNNER_TEMP/codex-home"
           mkdir -p "$HOME/.codex"
           chmod 700 "$HOME/.codex"
@@ -125,26 +127,12 @@ jobs:
           }
           trap cleanup EXIT
 
-          if [[ -z "${CODEX_AUTH_JSON:-}" ]]; then
-            echo "Missing repository secret CODEX_AUTH_JSON." >&2
-            echo "Populate it with the full contents of ~/.codex/auth.json from a machine where Codex is already logged in." >&2
-            exit 1
-          fi
-          if ! printf '%s' "$CODEX_AUTH_JSON" | jq -e 'type == "object" and has("tokens") and has("last_refresh")' >/dev/null; then
-            echo "Repository secret CODEX_AUTH_JSON is not a valid Codex auth.json payload." >&2
-            echo "Set it to the exact contents of ~/.codex/auth.json, not a file path, secret name, or wrapper JSON." >&2
-            exit 1
-          fi
           printf '%s' "$CODEX_AUTH_JSON" > "$HOME/.codex/auth.json"
           chmod 600 "$HOME/.codex/auth.json"
           unset CODEX_AUTH_JSON
 
-          codex login status
-
-          # Parse JSON array CODEX_ARGS into a bash array
           eval "EXTRA_ARGS=($(echo "$CODEX_ARGS" | jq -r '.[] | @sh'))"
 
-          # Execute codex and pass the prompt via stdin
           printf '%s' "$PROMPT" | codex \
             --ask-for-approval "$CODEX_APPROVAL_POLICY" \
             "${EXTRA_ARGS[@]}" \
@@ -154,7 +142,7 @@ jobs:
             --output-last-message "$CODEX_OUTPUT_FILE" \
             -
 
-      - name: Finalize commit, snapshot, predicate, and PR body
+      - name: Commit directly with prompt and Codex output
         env:
           REPOSITORY: ${{ github.repository }}
           ACTOR: ${{ github.actor }}
@@ -163,24 +151,23 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ ! -f "${CODEX_OUTPUT_FILE}" ]]; then
-            echo "Missing required file: ${CODEX_OUTPUT_FILE}" >&2
-            exit 1
-          fi
-
           commit_title="codex: ${PROMPT_SUMMARY}"
           commit_message_file="$(mktemp)"
 
-          cat > "${commit_message_file}" <<EOF
-          ${commit_title}
-
-          Prompt:
-          ${PROMPT}
-
-          Target-Branch: ${TARGET_BRANCH}
-          Base-SHA: ${BASE_SHA}
-          Run-Branch: ${RUN_BRANCH}
-          EOF
+          {
+            echo "${commit_title}"
+            echo
+            echo "Prompt:"
+            echo "${PROMPT}"
+            echo
+            echo "Target-Branch: ${TARGET_BRANCH}"
+            echo "Previous-Target-SHA: ${PREVIOUS_TARGET_SHA}"
+            echo "Start-SHA: ${START_SHA}"
+            echo "Backup-Branch: ${BACKUP_BRANCH}"
+            echo
+            echo "Codex-Last-Output:"
+            cat "${CODEX_OUTPUT_FILE}"
+          } > "${commit_message_file}"
 
           git add -A
           git -c commit.gpgsign=false commit --allow-empty --file "${commit_message_file}"
@@ -197,13 +184,13 @@ jobs:
             --arg workflow_run_attempt "${WORKFLOW_RUN_ATTEMPT}" \
             --arg actor "${ACTOR}" \
             --arg target_branch "${TARGET_BRANCH}" \
-            --argjson target_branch_created "${TARGET_BRANCH_CREATED}" \
-            --arg run_branch "${RUN_BRANCH}" \
-            --arg base_sha "${BASE_SHA}" \
+            --arg previous_target_sha "${PREVIOUS_TARGET_SHA}" \
+            --arg start_sha "${START_SHA}" \
+            --arg backup_branch "${BACKUP_BRANCH}" \
             --arg head_sha "${head_sha}" \
             --arg prompt "${PROMPT}" \
             --arg codex_output_sha256 "${codex_output_sha256}" \
-            --arg snapshot_sha256 "${snapshot_sha256}" \
+            --arg branch_snapshot_sha256 "${snapshot_sha256}" \
             --arg model "${CODEX_MODEL}" \
             --arg codex_version "${CODEX_VERSION}" \
             '{
@@ -212,48 +199,21 @@ jobs:
               workflow_run_attempt: $workflow_run_attempt,
               actor: $actor,
               target_branch: $target_branch,
-              target_branch_created: $target_branch_created,
-              run_branch: $run_branch,
-              base_sha: $base_sha,
+              previous_target_sha: $previous_target_sha,
+              start_sha: $start_sha,
+              backup_branch: $backup_branch,
               head_sha: $head_sha,
               prompt: $prompt,
               codex_output_sha256: $codex_output_sha256,
-              branch_snapshot_sha256: $snapshot_sha256,
+              branch_snapshot_sha256: $branch_snapshot_sha256,
               model: $model,
               codex_version: $codex_version
             }' > "${PREDICATE_FILE}"
 
-          cat > "${PR_BODY_FILE}" <<EOF
-          ## Prompt
-
-          \`\`\`\`\`\`\`\`
-          ${PROMPT}
-          \`\`\`\`\`\`\`\`
-
-          ## Verify
-
-          \`\`\`bash
-          git fetch origin ${RUN_BRANCH}
-          git archive --format=tar ${head_sha} > branch-snapshot.tar
-          gh attestation verify branch-snapshot.tar -R ${REPOSITORY}
-          gh attestation verify branch-snapshot.tar -R ${REPOSITORY} --predicate-type ${RUN_PREDICATE_TYPE} --format json --jq '.[].verificationResult.statement.predicate'
-          git diff ${BASE_SHA} ${head_sha}
-          \`\`\`
-
-          Verify that the custom predicate reports:
-
-          - \`base_sha\`: \`${BASE_SHA}\`
-          - \`head_sha\`: \`${head_sha}\`
-          - \`run_branch\`: \`${RUN_BRANCH}\`
-          - \`codex_output_sha256\`: \`${codex_output_sha256}\`
-          - \`branch_snapshot_sha256\`: \`${snapshot_sha256}\`
-          EOF
-
           {
             echo "HEAD_SHA=${head_sha}"
-            echo "COMMIT_TITLE=${commit_title}"
             echo "SNAPSHOT_SHA256=${snapshot_sha256}"
-          } >> "${GITHUB_ENV}"
+          } >> "$GITHUB_ENV"
 
       - name: Create provenance attestation
         uses: actions/attest@v4
@@ -267,21 +227,13 @@ jobs:
           predicate-type: ${{ env.RUN_PREDICATE_TYPE }}
           predicate-path: ${{ env.PREDICATE_FILE }}
 
-      - name: Push run branch
-        run: git push --set-upstream origin "${RUN_BRANCH}"
-
-      - name: Open pull request
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Push directly to target branch
         run: |
-          pr_url="$(
-            gh pr create \
-              --base "${TARGET_BRANCH}" \
-              --head "${RUN_BRANCH}" \
-              --title "${COMMIT_TITLE}" \
-              --body-file "${PR_BODY_FILE}"
-          )"
-          echo "PR_URL=${pr_url}" >> "${GITHUB_ENV}"
+          set -euo pipefail
+          git push \
+            --force-with-lease=refs/heads/${TARGET_BRANCH}:${PREVIOUS_TARGET_SHA} \
+            origin \
+            HEAD:refs/heads/${TARGET_BRANCH}
 
       - name: Upload run artifacts
         uses: actions/upload-artifact@v4
@@ -295,13 +247,12 @@ jobs:
       - name: Write workflow summary
         run: |
           {
-            echo "## Codex Run"
+            echo "## Codex Direct Run"
             echo
             echo "- Target branch: \`${TARGET_BRANCH}\`"
-            echo "- Target branch created: \`${TARGET_BRANCH_CREATED}\`"
-            echo "- Base SHA: \`${BASE_SHA}\`"
-            echo "- Head SHA: \`${HEAD_SHA}\`"
-            echo "- Run branch: \`${RUN_BRANCH}\`"
+            echo "- Previous target SHA: \`${PREVIOUS_TARGET_SHA}\`"
+            echo "- Start SHA: \`${START_SHA}\`"
+            echo "- New head SHA: \`${HEAD_SHA}\`"
+            echo "- Backup branch: \`${BACKUP_BRANCH}\`"
             echo "- Branch snapshot SHA-256: \`${SNAPSHOT_SHA256}\`"
-            echo "- Pull request: ${PR_URL}"
           } >> "${GITHUB_STEP_SUMMARY}"
