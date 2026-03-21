@@ -87,7 +87,6 @@ jobs:
             exit 1
           fi
 
-          current_checkout_sha="$(git rev-parse HEAD)"
           timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
           target_branch_slug="$(printf '%s' "${TARGET_BRANCH}" | tr '[:upper:]' '[:lower:]')"
           prompt_compact="$(printf '%s' "${PROMPT}" | tr '\r\n\t' ' ' | tr -s '[:space:]' ' ' | sed -E 's/^ //; s/ $//')"
@@ -124,7 +123,12 @@ jobs:
             if [[ -n "${START_COMMIT}" ]]; then
               start_sha="$(resolve_commit "${START_COMMIT}")"
             else
-              start_sha="${current_checkout_sha}"
+              git switch --orphan "__codex_init_${timestamp}" >/dev/null
+              git rm -rf . >/dev/null 2>&1 || true
+              find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+              git clean -fdx >/dev/null 2>&1 || true
+              git -c commit.gpgsign=false commit --allow-empty -m "chore: initialize ${TARGET_BRANCH}" >/dev/null
+              start_sha="$(git rev-parse HEAD)"
             fi
           fi
 
