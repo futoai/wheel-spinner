@@ -1,73 +1,58 @@
-# React + TypeScript + Vite
+# PDF Utils (Client-Side Only)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A browser-only PDF utility web app built with React + TypeScript + Vite + Tailwind + shadcn/ui.
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Merge multiple PDF files into one output
+- Reorder pages with drag-and-drop
+- Rotate selected pages (90deg increments)
+- Delete selected pages
+- Extract selected pages to a new PDF
+- Split pages by ranges (exports a ZIP of PDFs)
+- No backend, no server-side processing, no external uploads
 
-## React Compiler
+## Stack
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- React 19 + TypeScript
+- Vite 8
+- Tailwind CSS v4
+- shadcn/ui (Vite setup)
+- `pdf-lib` for PDF editing
+- `pdfjs-dist` for page thumbnail rendering
+- `@dnd-kit` for sortable drag-and-drop
 
-## Expanding the ESLint configuration
+## Local Development
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Production Build
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm run build
 ```
+
+The app is configured for static/IPFS-style hosting with relative asset paths via `base: "./"` in `vite.config.ts`.
+
+## IPFS CID (Generated Locally)
+
+Build output folder: `dist/`
+
+CID:
+
+`bafybeigenna4oyibds7qozpznz66dy5vvax3zm6qjeixvqvu3gehdlm5ly`
+
+Generated locally with:
+
+```bash
+npx ipfs-car pack dist --output dist.car
+```
+
+## Example Gateway URLs
+
+- `https://ipfs.io/ipfs/bafybeigenna4oyibds7qozpznz66dy5vvax3zm6qjeixvqvu3gehdlm5ly/`
+- `https://ipfs.io/ipfs/bafybeigenna4oyibds7qozpznz66dy5vvax3zm6qjeixvqvu3gehdlm5ly/index.html`
+- `https://bafybeigenna4oyibds7qozpznz66dy5vvax3zm6qjeixvqvu3gehdlm5ly.ipfs.dweb.link/`
