@@ -106,10 +106,6 @@ jobs:
 
             if [[ -n "${START_COMMIT}" ]]; then
               start_sha="$(resolve_commit "${START_COMMIT}")"
-              if ! git merge-base --is-ancestor "${start_sha}" "${previous_target_sha}"; then
-                echo "start_commit must be an ancestor of ${TARGET_BRANCH}." >&2
-                exit 1
-              fi
             else
               start_sha="${previous_target_sha}"
             fi
@@ -208,7 +204,6 @@ jobs:
           fi
 
           previous_target_display="${PREVIOUS_TARGET_SHA:-<none>}"
-          backup_branch_display="${BACKUP_BRANCH:-<none>}"
 
           commit_title="codex: ${PROMPT_SUMMARY}"
           commit_message_file="$(mktemp)"
@@ -223,7 +218,6 @@ jobs:
             echo "Target-Branch-Created: ${TARGET_BRANCH_CREATED}"
             echo "Previous-Target-SHA: ${previous_target_display}"
             echo "Start-SHA: ${START_SHA}"
-            echo "Backup-Branch: ${backup_branch_display}"
             echo
             echo "Codex-Last-Output:"
             cat "${CODEX_OUTPUT_FILE}"
