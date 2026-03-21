@@ -12,7 +12,7 @@ on:
         required: true
         type: string
       start_commit:
-        description: Optional commit to start from. Defaults to current target head.
+        description: Optional commit to start from. Defaults to the current target head, or the checked out workflow ref if the target branch does not exist yet.
         required: false
         default: ""
         type: string
@@ -39,9 +39,9 @@ jobs:
       CODEX_APPROVAL_POLICY: never
       CODEX_ARGS: '["--search"]'
       RUN_PREDICATE_TYPE: https://verifiable-codex.dev/codex-run/v2
-
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out workflow repository
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: true
@@ -53,56 +53,90 @@ jobs:
 
       - name: Prepare metadata paths
         run: |
+          mkdir -p "${RUNNER_TEMP}/codex-run"
           {
             echo "META_DIR=${RUNNER_TEMP}/codex-run"
             echo "CODEX_OUTPUT_FILE=${RUNNER_TEMP}/codex-run/codex-output.md"
             echo "PREDICATE_FILE=${RUNNER_TEMP}/codex-run/codex-run-predicate.json"
             echo "SNAPSHOT_FILE=${RUNNER_TEMP}/codex-run/branch-snapshot.tar"
-          } >> "$GITHUB_ENV"
-          mkdir -p "${RUNNER_TEMP}/codex-run"
+          } >> "${GITHUB_ENV}"
 
       - name: Resolve target, backup current head, and choose start point
         run: |
           set -euo pipefail
+
+          resolve_commit() {
+            local ref="$1"
+
+            if git rev-parse --verify --quiet "${ref}^{commit}" >/dev/null; then
+              git rev-parse "${ref}^{commit}"
+              return
+            fi
+
+            if git fetch --no-tags origin "${ref}" >/dev/null 2>&1; then
+              git rev-parse FETCH_HEAD^{commit}
+              return
+            fi
+
+            echo "Unable to resolve start_commit '${ref}' as a commit or remote ref." >&2
+            exit 1
+          }
 
           if ! git check-ref-format --branch "${TARGET_BRANCH}" >/dev/null 2>&1; then
             echo "Invalid target branch: ${TARGET_BRANCH}" >&2
             exit 1
           fi
 
-          git fetch --no-tags origin "+refs/heads/${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}"
-
-          previous_target_sha="$(git rev-parse "origin/${TARGET_BRANCH}")"
-
-          if [[ -n "${START_COMMIT}" ]]; then
-            git fetch --no-tags origin "${START_COMMIT}" || true
-            start_sha="$(git rev-parse "${START_COMMIT}^{commit}")"
-          else
-            start_sha="${previous_target_sha}"
+          current_checkout_sha="$(git rev-parse HEAD)"
+          timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+          target_branch_slug="$(printf '%s' "${TARGET_BRANCH}" | tr '[:upper:]' '[:lower:]')"
+          prompt_compact="$(printf '%s' "${PROMPT}" | tr '\r\n\t' ' ' | tr -s '[:space:]' ' ' | sed -E 's/^ //; s/ $//')"
+          prompt_summary="$(printf '%s' "${prompt_compact}" | sed -E 's/^(.{0,39}).*$/\1/; s#[ .,:;_/-]+$##')"
+          prompt_summary="${prompt_summary:-run}"
+          if [[ ${#prompt_compact} -gt 39 && "${prompt_summary}" != "run" ]]; then
+            prompt_summary="${prompt_summary}..."
           fi
 
-          # Strongly recommended: only allow replay from target branch history.
-          git merge-base --is-ancestor "${start_sha}" "origin/${TARGET_BRANCH}"
+          target_branch_created=false
+          previous_target_sha=""
+          backup_branch=""
 
-          timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-          target_branch_slug="$(printf '%s' "${TARGET_BRANCH}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._/-]+/-/g')"
-          backup_branch="backup/${target_branch_slug}/${timestamp}-${previous_target_sha:0:12}"
+          if git ls-remote --exit-code --heads origin "refs/heads/${TARGET_BRANCH}" >/dev/null 2>&1; then
+            git fetch --no-tags origin "+refs/heads/${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}"
+            previous_target_sha="$(git rev-parse "origin/${TARGET_BRANCH}")"
 
-          git branch -f "${backup_branch}" "${previous_target_sha}"
-          git push origin "refs/heads/${backup_branch}:refs/heads/${backup_branch}"
+            if [[ -n "${START_COMMIT}" ]]; then
+              start_sha="$(resolve_commit "${START_COMMIT}")"
+              if ! git merge-base --is-ancestor "${start_sha}" "${previous_target_sha}"; then
+                echo "start_commit must be an ancestor of ${TARGET_BRANCH}." >&2
+                exit 1
+              fi
+            else
+              start_sha="${previous_target_sha}"
+            fi
 
-          git switch --detach "${start_sha}"
+            backup_branch="backup/${target_branch_slug}/${timestamp}-${previous_target_sha:0:12}"
+            git branch -f "${backup_branch}" "${previous_target_sha}"
+            git push origin "refs/heads/${backup_branch}:refs/heads/${backup_branch}"
+          else
+            target_branch_created=true
 
-          prompt_compact="$(printf '%s' "${PROMPT}" | tr '\r\n\t' ' ' | tr -s '[:space:]' ' ' | sed -E 's/^ //; s/ $//')"
-          prompt_summary="$(printf '%s' "${prompt_compact}" | sed -E 's/^(.{0,60}).*$/\1/; s#[ .,:;_/-]+$##')"
-          prompt_summary="${prompt_summary:-run}"
+            if [[ -n "${START_COMMIT}" ]]; then
+              start_sha="$(resolve_commit "${START_COMMIT}")"
+            else
+              start_sha="${current_checkout_sha}"
+            fi
+          fi
+
+          git switch --detach "${start_sha}" >/dev/null
 
           {
             echo "PREVIOUS_TARGET_SHA=${previous_target_sha}"
             echo "START_SHA=${start_sha}"
             echo "BACKUP_BRANCH=${backup_branch}"
             echo "PROMPT_SUMMARY=${prompt_summary}"
-          } >> "$GITHUB_ENV"
+            echo "TARGET_BRANCH_CREATED=${target_branch_created}"
+          } >> "${GITHUB_ENV}"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -127,9 +161,22 @@ jobs:
           }
           trap cleanup EXIT
 
+          if [[ -z "${CODEX_AUTH_JSON:-}" ]]; then
+            echo "Missing repository secret CODEX_AUTH_JSON." >&2
+            echo "Populate it with the full contents of ~/.codex/auth.json from a machine where Codex is already logged in." >&2
+            exit 1
+          fi
+          if ! printf '%s' "$CODEX_AUTH_JSON" | jq -e 'type == "object" and has("tokens") and has("last_refresh")' >/dev/null; then
+            echo "Repository secret CODEX_AUTH_JSON is not a valid Codex auth.json payload." >&2
+            echo "Set it to the exact contents of ~/.codex/auth.json, not a file path, secret name, or wrapper JSON." >&2
+            exit 1
+          fi
+
           printf '%s' "$CODEX_AUTH_JSON" > "$HOME/.codex/auth.json"
           chmod 600 "$HOME/.codex/auth.json"
           unset CODEX_AUTH_JSON
+
+          codex login status
 
           eval "EXTRA_ARGS=($(echo "$CODEX_ARGS" | jq -r '.[] | @sh'))"
 
@@ -142,7 +189,7 @@ jobs:
             --output-last-message "$CODEX_OUTPUT_FILE" \
             -
 
-      - name: Commit directly with prompt and Codex output
+      - name: Commit directly, snapshot, and build predicate
         env:
           REPOSITORY: ${{ github.repository }}
           ACTOR: ${{ github.actor }}
@@ -150,6 +197,14 @@ jobs:
           WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
+
+          if [[ ! -f "${CODEX_OUTPUT_FILE}" ]]; then
+            echo "Missing required file: ${CODEX_OUTPUT_FILE}" >&2
+            exit 1
+          fi
+
+          previous_target_display="${PREVIOUS_TARGET_SHA:-<none>}"
+          backup_branch_display="${BACKUP_BRANCH:-<none>}"
 
           commit_title="codex: ${PROMPT_SUMMARY}"
           commit_message_file="$(mktemp)"
@@ -161,16 +216,17 @@ jobs:
             echo "${PROMPT}"
             echo
             echo "Target-Branch: ${TARGET_BRANCH}"
-            echo "Previous-Target-SHA: ${PREVIOUS_TARGET_SHA}"
+            echo "Target-Branch-Created: ${TARGET_BRANCH_CREATED}"
+            echo "Previous-Target-SHA: ${previous_target_display}"
             echo "Start-SHA: ${START_SHA}"
-            echo "Backup-Branch: ${BACKUP_BRANCH}"
+            echo "Backup-Branch: ${backup_branch_display}"
             echo
             echo "Codex-Last-Output:"
             cat "${CODEX_OUTPUT_FILE}"
           } > "${commit_message_file}"
 
           git add -A
-          git -c commit.gpgsign=false commit --allow-empty --file "${commit_message_file}"
+          git -c commit.gpgsign=false -c commit.cleanup=verbatim commit --allow-empty --file "${commit_message_file}"
           rm -f "${commit_message_file}"
 
           head_sha="$(git rev-parse HEAD)"
@@ -184,6 +240,7 @@ jobs:
             --arg workflow_run_attempt "${WORKFLOW_RUN_ATTEMPT}" \
             --arg actor "${ACTOR}" \
             --arg target_branch "${TARGET_BRANCH}" \
+            --argjson target_branch_created "${TARGET_BRANCH_CREATED}" \
             --arg previous_target_sha "${PREVIOUS_TARGET_SHA}" \
             --arg start_sha "${START_SHA}" \
             --arg backup_branch "${BACKUP_BRANCH}" \
@@ -199,6 +256,7 @@ jobs:
               workflow_run_attempt: $workflow_run_attempt,
               actor: $actor,
               target_branch: $target_branch,
+              target_branch_created: $target_branch_created,
               previous_target_sha: $previous_target_sha,
               start_sha: $start_sha,
               backup_branch: $backup_branch,
@@ -212,8 +270,9 @@ jobs:
 
           {
             echo "HEAD_SHA=${head_sha}"
+            echo "COMMIT_TITLE=${commit_title}"
             echo "SNAPSHOT_SHA256=${snapshot_sha256}"
-          } >> "$GITHUB_ENV"
+          } >> "${GITHUB_ENV}"
 
       - name: Create provenance attestation
         uses: actions/attest@v4
@@ -230,10 +289,15 @@ jobs:
       - name: Push directly to target branch
         run: |
           set -euo pipefail
-          git push \
-            --force-with-lease=refs/heads/${TARGET_BRANCH}:${PREVIOUS_TARGET_SHA} \
-            origin \
-            HEAD:refs/heads/${TARGET_BRANCH}
+
+          if [[ "${TARGET_BRANCH_CREATED}" == "true" ]]; then
+            git push --set-upstream origin "HEAD:refs/heads/${TARGET_BRANCH}"
+          else
+            git push \
+              --force-with-lease=refs/heads/${TARGET_BRANCH}:${PREVIOUS_TARGET_SHA} \
+              origin \
+              HEAD:refs/heads/${TARGET_BRANCH}
+          fi
 
       - name: Upload run artifacts
         uses: actions/upload-artifact@v4
@@ -246,13 +310,16 @@ jobs:
 
       - name: Write workflow summary
         run: |
+          previous_target_display="${PREVIOUS_TARGET_SHA:-<none>}"
+          backup_branch_display="${BACKUP_BRANCH:-<none>}"
           {
             echo "## Codex Direct Run"
             echo
             echo "- Target branch: \`${TARGET_BRANCH}\`"
-            echo "- Previous target SHA: \`${PREVIOUS_TARGET_SHA}\`"
+            echo "- Target branch created: \`${TARGET_BRANCH_CREATED}\`"
+            echo "- Previous target SHA: \`${previous_target_display}\`"
             echo "- Start SHA: \`${START_SHA}\`"
             echo "- New head SHA: \`${HEAD_SHA}\`"
-            echo "- Backup branch: \`${BACKUP_BRANCH}\`"
+            echo "- Backup branch: \`${backup_branch_display}\`"
             echo "- Branch snapshot SHA-256: \`${SNAPSHOT_SHA256}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
