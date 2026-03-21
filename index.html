@@ -4,107 +4,22 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Counter App</title>
-  <style>
-    :root {
-      --bg: #f7fafc;
-      --card: #ffffff;
-      --text: #1f2937;
-      --muted: #6b7280;
-      --primary: #0f766e;
-      --primary-hover: #115e59;
-      --danger: #dc2626;
-      --danger-hover: #b91c1c;
-      --border: #e5e7eb;
-    }
-
-    * {
-      box-sizing: border-box;
-    }
-
-    body {
-      margin: 0;
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      background: radial-gradient(circle at top, #e6fffb 0%, var(--bg) 45%);
-      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-      color: var(--text);
-    }
-
-    .card {
-      width: min(92vw, 420px);
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 28px 24px;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
-      text-align: center;
-    }
-
-    h1 {
-      margin: 0 0 8px;
-      font-size: 1.5rem;
-      letter-spacing: 0.01em;
-    }
-
-    p {
-      margin: 0 0 22px;
-      color: var(--muted);
-      font-size: 0.95rem;
-    }
-
-    #count {
-      margin: 0 0 22px;
-      font-size: 3rem;
-      font-weight: 700;
-      line-height: 1;
-    }
-
-    .buttons {
-      display: flex;
-      gap: 10px;
-      justify-content: center;
-      flex-wrap: wrap;
-    }
-
-    button {
-      border: 0;
-      border-radius: 10px;
-      padding: 10px 14px;
-      font-size: 0.95rem;
-      font-weight: 600;
-      cursor: pointer;
-      color: #fff;
-      background: var(--primary);
-      transition: transform 120ms ease, background-color 120ms ease;
-    }
-
-    button:hover {
-      background: var(--primary-hover);
-    }
-
-    button:active {
-      transform: translateY(1px);
-    }
-
-    .danger {
-      background: var(--danger);
-    }
-
-    .danger:hover {
-      background: var(--danger-hover);
-    }
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <style type="text/tailwindcss">
+    @plugin "daisyui";
   </style>
 </head>
-<body>
-  <main class="card">
-    <h1>Counter App</h1>
-    <p>Click the buttons to change the value.</p>
-    <div id="count" aria-live="polite">0</div>
-    <div class="buttons">
-      <button id="decrement" type="button">-1</button>
-      <button id="increment" type="button">+1</button>
-      <button id="reset" class="danger" type="button">Reset</button>
+<body class="min-h-screen bg-base-200 grid place-items-center p-4">
+  <main class="card w-full max-w-md bg-base-100 shadow-xl">
+    <div class="card-body items-center text-center gap-5">
+      <h1 class="card-title text-3xl">Counter App</h1>
+      <p class="text-base-content/70">Click the buttons to change the value.</p>
+      <div id="count" aria-live="polite" class="badge badge-primary badge-lg h-16 min-w-24 text-4xl font-bold">0</div>
+      <div class="flex gap-2 justify-center flex-wrap">
+        <button id="decrement" class="btn btn-outline btn-primary" type="button">-1</button>
+        <button id="increment" class="btn btn-primary" type="button">+1</button>
+        <button id="reset" class="btn btn-error" type="button">Reset</button>
+      </div>
     </div>
   </main>
 
