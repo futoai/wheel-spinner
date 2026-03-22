@@ -41,7 +41,7 @@ jobs:
       WORKFLOW_PATH: .github/workflows/run-attestai.yml
     steps:
       - name: Check out workflow repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.workflow_sha }}
           fetch-depth: 0
@@ -215,7 +215,7 @@ jobs:
           } >> "${GITHUB_ENV}"
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
 
@@ -330,7 +330,7 @@ jobs:
           fi
 
       - name: Upload run artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: attestai-run-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.COMMIT_SUBJECT_FILE }}
