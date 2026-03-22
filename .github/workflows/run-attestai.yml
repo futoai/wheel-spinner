@@ -130,7 +130,7 @@ jobs:
 
             if ! printf '%s' "${body_json}" | jq -e '
               type == "object" and
-              .chain_version == 1 and
+              .attestai_version == 1 and
               (.prompt | type == "string") and
               (.prompt_sha256 | type == "string") and
               (.workflow_sha256 | type == "string") and
@@ -273,19 +273,19 @@ jobs:
           commit_body_file="$(mktemp)"
           commit_message_file="$(mktemp)"
 
-          jq -nS \
+          jq -n \
             --arg prompt "${PROMPT_NORMALIZED}" \
             --arg prompt_sha256 "${PROMPT_SHA256}" \
             --arg workflow_sha256 "${WORKFLOW_SHA256}" \
             --arg model "${CODEX_MODEL}" \
             --arg codex_version "${CODEX_VERSION}" \
             '{
-              chain_version: 1,
               prompt: $prompt,
-              prompt_sha256: $prompt_sha256,
-              workflow_sha256: $workflow_sha256,
               model: $model,
-              codex_version: $codex_version
+              codex_version: $codex_version,
+              attestai_version: 1,
+              prompt_sha256: $prompt_sha256,
+              workflow_sha256: $workflow_sha256
             }' > "${commit_body_file}"
 
           {
