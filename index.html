@@ -5,9 +5,72 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Counter App</title>
   <link href="https://cdn.jsdelivr.net/npm/daisyui@5/dist/full.min.css" rel="stylesheet" type="text/css" />
+  <style>
+    .counter-card {
+      animation: card-in 480ms cubic-bezier(0.22, 1, 0.36, 1);
+      transform-origin: center 30%;
+    }
+
+    #count {
+      transition: color 220ms ease;
+      will-change: transform;
+    }
+
+    #count.animate {
+      animation: count-pop 240ms ease;
+    }
+
+    #count.up {
+      color: oklch(var(--su));
+    }
+
+    #count.down {
+      color: oklch(var(--er));
+    }
+
+    .counter-btn {
+      transition: transform 140ms ease, box-shadow 140ms ease;
+    }
+
+    .counter-btn:active {
+      transform: translateY(1px) scale(0.98);
+    }
+
+    @keyframes card-in {
+      from {
+        opacity: 0;
+        transform: translateY(16px) scale(0.985);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    @keyframes count-pop {
+      0% {
+        transform: scale(0.95);
+      }
+      55% {
+        transform: scale(1.12);
+      }
+      100% {
+        transform: scale(1);
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .counter-card,
+      #count.animate,
+      .counter-btn {
+        animation: none !important;
+        transition: none !important;
+      }
+    }
+  </style>
 </head>
 <body class="min-h-screen bg-base-200 grid place-items-center p-4">
-  <main class="card w-full max-w-md bg-base-100 shadow-xl border border-base-300">
+  <main class="card counter-card w-full max-w-md bg-base-100 shadow-xl border border-base-300">
     <div class="card-body items-center text-center gap-5">
       <h1 class="card-title text-3xl">Counter</h1>
       <p class="text-base-content/70">Simple single-file counter app</p>
@@ -20,9 +83,9 @@
       </div>
 
       <div class="grid grid-cols-3 gap-2 w-full">
-        <button id="decrement" type="button" aria-label="Decrement" class="btn btn-outline">-1</button>
-        <button id="reset" type="button" aria-label="Reset" class="btn btn-error">Reset</button>
-        <button id="increment" type="button" aria-label="Increment" class="btn btn-primary">+1</button>
+        <button id="decrement" type="button" aria-label="Decrement" class="btn btn-outline counter-btn">-1</button>
+        <button id="reset" type="button" aria-label="Reset" class="btn btn-error counter-btn">Reset</button>
+        <button id="increment" type="button" aria-label="Increment" class="btn btn-primary counter-btn">+1</button>
       </div>
     </div>
   </main>
@@ -35,18 +98,33 @@
 
     let count = 0;
 
-    function render() {
+    function animateCount(direction = '') {
+      countEl.classList.remove('animate', 'up', 'down');
+      void countEl.offsetWidth;
+      countEl.classList.add('animate');
+
+      if (direction) {
+        countEl.classList.add(direction);
+      }
+
+      window.setTimeout(() => {
+        countEl.classList.remove('up', 'down');
+      }, 300);
+    }
+
+    function render(direction = '') {
       countEl.textContent = String(count);
+      animateCount(direction);
     }
 
     incrementBtn.addEventListener('click', () => {
       count += 1;
-      render();
+      render('up');
     });
 
     decrementBtn.addEventListener('click', () => {
       count -= 1;
-      render();
+      render('down');
     });
 
     resetBtn.addEventListener('click', () => {
