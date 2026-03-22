@@ -1,4 +1,4 @@
-name: Attestai
+name: Run Attestai
 
 on:
   workflow_dispatch:
@@ -43,6 +43,7 @@ jobs:
       - name: Check out workflow repository
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.workflow_sha }}
           fetch-depth: 0
           persist-credentials: true
 
